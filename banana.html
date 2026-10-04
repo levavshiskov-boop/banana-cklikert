@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Банановый кликер</title>
+<style>
+:root{--bg:#1d2b4a;--panel:#27396399;--ink:#fff7d6;--sun:#ffd23f;--sun2:#f2a900;--mut:#b9c4e0}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(circle at 50% 0,#3b5aa0,var(--bg) 60%);color:var(--ink);font-family:"Trebuchet MS","Segoe UI",sans-serif;display:flex;flex-direction:column;align-items:center;padding:16px;user-select:none;-webkit-user-select:none}
+h1{margin:4px 0;font-size:1.4rem}
+.score{font-size:2.6rem;font-weight:800;color:var(--sun)}
+.sub{color:var(--mut);margin-bottom:8px}
+#stage{position:relative;width:min(70vw,260px);aspect-ratio:1;display:grid;place-items:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#hero{width:100%;height:100%;object-fit:contain;transition:transform .08s;touch-action:manipulation}
+#stage:active #hero{transform:scale(.92)}
+.pop{position:absolute;font-weight:800;color:var(--sun);pointer-events:none;animation:up .8s forwards}
+@keyframes up{to{transform:translateY(-80px);opacity:0}}
+.crew{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;max-width:420px;min-height:36px;margin:6px 0}
+.crew img{width:28px;height:28px}
+.shop{width:100%;max-width:440px;display:grid;gap:8px;margin-top:8px}
+.item{display:flex;align-items:center;gap:10px;background:var(--panel);border:2px solid transparent;border-radius:14px;padding:8px 12px;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.item img{width:40px;height:40px;flex:none}
+.item b{display:block}
+.item small{color:var(--mut)}
+.item .price{margin-left:auto;font-weight:800;color:var(--sun)}
+.item:disabled{opacity:.45;cursor:not-allowed}
+.item:not(:disabled):hover{border-color:var(--sun)}
+.item:focus-visible,.tools button:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+.tools{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center}
+.tools button{background:none;border:1px solid var(--mut);color:var(--mut);border-radius:10px;padding:6px 10px;font:inherit;cursor:pointer}
+#msg{height:18px;color:var(--mut);font-size:.85rem;margin-top:6px}
+@media (prefers-reduced-motion:reduce){.pop{animation:none;display:none}}
+</style>
+</head>
+<body>
+<h1>Банановый кликер</h1>
+<div class="score" id="score">0</div>
+<div class="sub" id="rate">0 бананов/сек · 1 за клик</div>
+
+<div id="stage" role="button" tabindex="0" aria-label="Кликнуть">
+  <img id="hero" alt="Жёлтый человечек" draggable="false">
+</div>
+
+<div class="crew" id="crew"></div>
+<div class="shop" id="shop"></div>
+
+<div class="tools">
+  <button id="upload">Своя картинка</button>
+  <button id="resetImg">Вернуть рисунок</button>
+  <button id="reset">Сбросить прогресс</button>
+</div>
+<input type="file" id="file" accept="image/*" hidden>
+<div id="msg"></div>
+
+<script>
+const KEY='banana-clicker-v1';
+// Оригинальные жёлтые человечки, рисуются SVG
+function buddy(c1,c2,hat){
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <ellipse cx="60" cy="112" rx="30" ry="5" fill="#0003"/>
+  <rect x="30" y="12" width="60" height="96" rx="30" fill="${c1}" stroke="${c2}" stroke-width="4"/>
+  <circle cx="48" cy="46" r="11" fill="#fff" stroke="${c2}" stroke-width="3"/><circle cx="75" cy="46" r="11" fill="#fff" stroke="${c2}" stroke-width="3"/>
+  <circle cx="50" cy="47" r="5" fill="#2a1a00"/><circle cx="73" cy="47" r="5" fill="#2a1a00"/>
+  <path d="M46 72 Q60 86 76 72" fill="none" stroke="#2a1a00" stroke-width="4" stroke-linecap="round"/>
+  <path d="M60 12 Q56 2 50 4 M60 12 Q66 0 74 4" fill="none" stroke="${c2}" stroke-width="3" stroke-linecap="round"/>
+  ${hat}</svg>`;
+  return 'data:image/svg+xml;utf8,'+encodeURIComponent(svg);
+}
+const ITEMS=[
+  {id:'baby',name:'Малыш',desc:'+0,5/сек',base:15,cps:0.5,img:buddy('#ffd23f','#c98b00','')},
+  {id:'cook',name:'Повар',desc:'+3/сек',base:100,cps:3,img:buddy('#ffd23f','#c98b00','<rect x="38" y="2" width="44" height="14" rx="6" fill="#fff"/>')},
+  {id:'pilot',name:'Пилот',desc:'+10/сек',base:600,cps:10,img:buddy('#ffe066','#c98b00','<path d="M34 24 Q60 -2 86 24Z" fill="#3b82f6"/>')},
+  {id:'wizard',name:'Волшебник',desc:'+45/сек',base:3500,cps:45,img:buddy('#ffd23f','#b07a00','<path d="M60 -8 L84 26 H36Z" fill="#7c3aed"/>')},
+  {id:'king',name:'Король',desc:'+200/сек',base:20000,cps:200,img:buddy('#ffcc1a','#a86f00','<path d="M36 22 L40 6 L50 16 L60 2 L70 16 L80 6 L84 22Z" fill="#e11d48"/>')}
+];
+const HERO=buddy('#ffd23f','#c98b00','');
+let S={bananas:0,total:0,clickPower:1,owned:{},upgrades:0,img:null,t:Date.now()};
+
+try{const r=localStorage.getItem(KEY);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
+
+const $=id=>document.getElementById(id);
+const fmt=n=>n>=1e6?(n/1e6).toFixed(2)+' млн':n>=1e4?Math.floor(n).toLocaleString('ru'):Math.floor(n).toString();
+const cost=(it)=>Math.ceil(it.base*Math.pow(1.15,S.owned[it.id]||0));
+const clickCost=()=>Math.ceil(50*Math.pow(2.2,S.upgrades));
+const cps=()=>ITEMS.reduce((a,it)=>a+it.cps*(S.owned[it.id]||0),0);
+
+// Офлайн-доход (до 8 часов, 50%)
+const away=Math.min((Date.now()-S.t)/1000,28800);
+if(away>10&&cps()>0){const g=cps()*away*0.5;S.bananas+=g;S.total+=g;
+  setTimeout(()=>say('Пока вас не было: +'+fmt(g)+' бананов'),300)}
+
+function say(t){$('msg').textContent=t;clearTimeout(say.t);say.t=setTimeout(()=>$('msg').textContent='',4000)}
+function save(){S.t=Date.now();try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){say('Не удалось сохранить (картинка слишком большая?)')}}
+
+function click(e){
+  S.bananas+=S.clickPower;S.total+=S.clickPower;
+  const st=$('stage'),p=document.createElement('div');p.className='pop';p.textContent='+'+fmt(S.clickPower);
+  const r=st.getBoundingClientRect();
+  const x=(e.clientX!==undefined&&e.clientX)?e.clientX-r.left:r.width/2;
+  const y=(e.clientY!==undefined&&e.clientY)?e.clientY-r.top:r.height/2;
+  p.style.left=x+'px';p.style.top=y+'px';st.appendChild(p);setTimeout(()=>p.remove(),800);
+  render();
+}
+$('stage').addEventListener('click',click);
+$('stage').addEventListener('keydown',e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();click({})}});
+
+function buy(id){
+  if(id==='click'){const c=clickCost();if(S.bananas<c)return;S.bananas-=c;S.upgrades++;S.clickPower*=2}
+  else{const it=ITEMS.find(i=>i.id===id),c=cost(it);if(S.bananas<c)return;S.bananas-=c;S.owned[id]=(S.owned[id]||0)+1}
+  render();save();
+}
+
+function buildShop(){
+  const sh=$('shop');sh.innerHTML='';
+  const mk=(id,img,name,desc)=>{const b=document.createElement('button');b.className='item';b.dataset.id=id;
+    b.innerHTML=`<img src="${img}" alt=""><span><b></b><small></small></span><span class="price"></span>`;
+    b.querySelector('b').textContent=name;b.querySelector('small').textContent=desc;
+    b.onclick=()=>buy(id);sh.appendChild(b)};
+  mk('click',HERO,'Сильные руки','Клик ×2');
+  ITEMS.forEach(it=>mk(it.id,it.img,it.name,it.desc));
+}
+
+function render(){
+  $('score').textContent=fmt(S.bananas);
+  $('rate').textContent=fmt(cps())+' бананов/сек · '+fmt(S.clickPower)+' за клик';
+  document.querySelectorAll('.item').forEach(b=>{
+    const id=b.dataset.id,it=ITEMS.find(i=>i.id===id);
+    const c=id==='click'?clickCost():cost(it);
+    b.querySelector('.price').textContent=fmt(c)+(it&&S.owned[id]?' (×'+S.owned[id]+')':'');
+    b.disabled=S.bananas<c;
+  });
+  const crew=$('crew');crew.innerHTML='';
+  ITEMS.forEach(it=>{const n=Math.min(S.owned[it.id]||0,12);for(let i=0;i<n;i++){const im=new Image();im.src=it.img;im.alt='';crew.appendChild(im)}});
+  $('hero').src=S.img||HERO;
+}
+
+// Своя картинка (сжимается и хранится в сохранении)
+$('upload').onclick=()=>$('file').click();
+$('file').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{const im=new Image();im.onload=()=>{
+    const m=300,k=Math.min(1,m/Math.max(im.width,im.height));
+    const c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;
+    c.getContext('2d').drawImage(im,0,0,c.width,c.height);
+    S.img=c.toDataURL('image/png');render();save();say('Картинка заменена')};
+    im.src=rd.result};
+  rd.readAsDataURL(f);e.target.value='';
+};
+$('resetImg').onclick=()=>{S.img=null;render();save()};
+$('reset').onclick=()=>{if(confirm('Удалить весь прогресс?')){
+  const img=S.img;S={bananas:0,total:0,clickPower:1,owned:{},upgrades:0,img:img,t:Date.now()};render();save()}};
+
+let last=performance.now();
+setInterval(()=>{const n=performance.now(),d=(n-last)/1000;last=n;const g=cps()*d;
+  if(g){S.bananas+=g;S.total+=g;
+    $('score').textContent=fmt(S.bananas);
+    document.querySelectorAll('.item').forEach(b=>{const id=b.dataset.id,it=ITEMS.find(i=>i.id===id);
+      b.disabled=S.bananas<(id==='click'?clickCost():cost(it))})}
+},100);
+setInterval(save,5000);
+addEventListener('beforeunload',save);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)save()});
+
+buildShop();render();
+</script>
+</body>
+</html>
